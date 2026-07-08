@@ -21,6 +21,9 @@ static int yext2_mount(struct super_block *sb) {
   struct yext2_super_block *yext2_sb;
   struct inode *root;
   struct yext2_inode *inode;
+  int root_dentry_block_no;
+  char *root_dentry_block;
+  struct yext2_dentry *root_de;
 
   if ((yext2_sb = malloc(sizeof(struct yext2_super_block))) == NULL) {
     return -1;
@@ -57,6 +60,12 @@ static int yext2_mount(struct super_block *sb) {
   if ((sb->s_root = d_make_root(root)) == NULL) {
     return -1;
   }
+
+  root_dentry_block_no = le32_to_cpu(inode->i_block[0]);
+  root_dentry_block = yext2_block_read(sb, root_dentry_block_no);
+  root_de = (struct yext2_dentry *)(root_dentry_block);
+  sb->s_root->d_fsdata = root_de;
+
   printf("sb->s_root: %p\n", sb->s_root);
 
   return 0;

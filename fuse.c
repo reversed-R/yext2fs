@@ -119,10 +119,9 @@ static struct dentry *yext2_search_dentry_of_path_fuse(struct super_block *sb,
   d_child_p = dentry->d_children;
   do {
     d_child = (struct dentry *)d_child_p->data;
-    if (d_child == NULL)
-      break;
 
-    if ((de = (struct yext2_dentry *)d_child->d_fsdata) == NULL) {
+    if (d_child == NULL ||
+        (de = (struct yext2_dentry *)d_child->d_fsdata) == NULL) {
       d_child_p = d_child_p->next;
       continue;
     }
@@ -183,26 +182,38 @@ int yext2_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler,
 }
 
 int yext2_getattr_fuse(const char *path, struct stat *stbuf) {
+  struct dentry *dentry;
+  struct yext2_dentry *de;
+  struct yext2_inode *yinode;
+  int ino;
+
+  printf("path: %s\n", path);
+
   memset(stbuf, 0, sizeof(struct stat));
 
-  // FIXME: mock
+  dentry = yext2_search_dentry_of_path_fuse(sb, sb->s_root, path);
+  printf("dentry: %p\n", dentry);
+  if (dentry == NULL)
+    return -ENOENT;
 
-  // handling of file system root
-  if (strcmp(path, "/") == 0) {
-    stbuf->st_mode = S_IFDIR | 0755;
-    stbuf->st_nlink = 2;
-    return 0;
-  }
+  de = YEXT2_DENTRY(dentry);
+  printf("de: %p\n", de);
+  ino = le32_to_cpu(de->inode);
+  yinode = yext2_get_inode(sb, ino);
+  if (yinode == NULL)
+    return -ENOENT;
 
-  /* マウント箇所からみたパスが"/file"かを確認 */
-  if (strcmp(path, "/file") == 0) {
-    stbuf->st_mode = S_IFREG | 0777;  // 権限
-    stbuf->st_nlink = 1;              // ハードリンクの数
-    stbuf->st_size = strlen(content); // ファイルサイズ
-    return 0;
-  }
+  stbuf->st_mode = le16_to_cpu(yinode->i_mode);
+  stbuf->st_nlink = le16_to_cpu(yinode->i_links_count);
+  stbuf->st_size = le32_to_cpu(yinode->i_size);
+  stbuf->st_blocks = le32_to_cpu(yinode->i_blocks);
 
-  return -ENOENT;
+  printf("st_mode: %x\n", le16_to_cpu(yinode->i_mode));
+  printf("st_nlink: %d\n", le16_to_cpu(yinode->i_links_count));
+  printf("st_size: %d\n", le32_to_cpu(yinode->i_size));
+  printf("st_blocks: %d\n", le32_to_cpu(yinode->i_blocks));
+
+  return 0;
 }
 
 int yext2_open_fuse(const char *path, struct fuse_file_info *fi) { return 0; }
