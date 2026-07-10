@@ -2,6 +2,12 @@
 #define YEXT2_FAKE_KERNEL_API_H
 
 /* fake declaration of kernel primitive types */
+#define bool _Bool
+#define true 1
+#define false 0
+
+#define NULL 0
+
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
@@ -81,6 +87,8 @@ struct super_block *super_block_new();
 
 struct dentry *dentry_alloc(struct inode *inode);
 
+void d_instantiate(struct dentry *dentry, struct inode *inode);
+
 struct list *list_new();
 
 void list_append(const struct list *list, void *data);
@@ -150,5 +158,7 @@ void list_append(const struct list *list, void *data);
 unsigned char fs_ftype_to_dtype(unsigned int filetype);
 
 unsigned char fs_umode_to_ftype(umode_t mode);
+
+umode_t mode_to_umode(mode_t mode);
 
 #endif // !YEXT2_FAKE_KERNEL_API_H

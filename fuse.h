@@ -10,6 +10,8 @@ int yext2_mkdir_fuse(const char *path, mode_t mode);
 
 int yext2_getattr_fuse(const char *path, struct stat *stbuf);
 
+int yext2_create_fuse(const char *path, mode_t mode, struct fuse_file_info *fi);
+
 int yext2_open_fuse(const char *path, struct fuse_file_info *fi);
 
 int yext2_read_fuse(const char *path, char *buf, size_t size, off_t offset,

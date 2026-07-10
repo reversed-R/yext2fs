@@ -172,6 +172,9 @@ void yext2_inode_print(struct yext2_inode *inode);
 
 void yext2_dentry_print(struct yext2_dentry *dentry);
 
+int yext2_create(struct super_block *sb, struct inode *dir,
+                 struct dentry *dentry, umode_t mode, bool excl);
+
 int yext2_readdir(struct file *file, struct dir_context *ctx);
 
 int yext2_mkdir(struct super_block *sb, struct dentry *parent,
@@ -183,11 +186,17 @@ int yext2_alloc_ino(struct super_block *sb, ino_t parent);
 long yext2_alloc_block(struct super_block *sb, unsigned long goal);
 
 void yext2_inode_init(struct yext2_super_block *sbi, struct yext2_inode *inode,
-                      mode_t mode);
+                      umode_t mode);
 
 void yext2_inode_inc_link_count(struct yext2_inode *inode);
 
 void yext2_inode_dec_link_count(struct yext2_inode *inode);
+
+int yext2_add_link(struct super_block *sb, struct dentry *dentry,
+                   struct inode *inode);
+
+struct inode *yext2_new_inode(struct super_block *sb, struct inode *parent,
+                              umode_t mode, const char *name);
 
 //  <------------ byte ------------>
 // | 7 | 6 | 5 | 4 | 3 | 2 | 1 | 0 |

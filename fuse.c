@@ -8,6 +8,7 @@
 
 #include "fake_disk.h"
 #include "fake_kernel_api.h"
+#include "yext2.h"
 
 static const char *content = "Hello, World!\n";
 
@@ -138,6 +139,9 @@ static struct dentry *yext2_search_dentry_of_path_fuse(struct super_block *sb,
     if (strcmp(current_de_name, de_name) == 0) {
       if (de->file_type == FT_DIR) {
         return yext2_search_dentry_of_path_fuse(sb, d_child, (path + i));
+      } else if (path[i] == '\0') {
+        // path の末尾において、ディレクトリ以外を発見したらそれを返す
+        return d_child;
       } else {
         return NULL;
       }
@@ -216,6 +220,74 @@ int yext2_getattr_fuse(const char *path, struct stat *stbuf) {
   return 0;
 }
 
+int yext2_create_fuse(const char *path, mode_t mode,
+                      struct fuse_file_info *fi) {
+  struct dentry *parent, *dentry;
+  struct list *d_child_p;
+  int last_slash = -1;
+  int i = 0;
+  char *tmp_path; // temporaly path buffer which the deepest dir is cut
+  int res;
+
+  printf("path: %s\n", path);
+
+  // cut the deepest dir
+  // foo/bar/baz
+  //         ^^^ 今作る部分
+  //        ^
+  //        | last_slash
+  // ^^^^^^^
+  // | 現在存在している部分
+  while (path[i]) {
+    if (path[i] == '/')
+      last_slash = i;
+
+    i++;
+  }
+  if ((tmp_path = malloc(last_slash + 1)) == NULL)
+    return -ENOMEM;
+  memcpy(tmp_path, path, last_slash);
+  tmp_path[last_slash] = '\0';
+
+  parent = yext2_search_dentry_of_path_fuse(sb, sb->s_root, tmp_path);
+  free(tmp_path);
+
+  // check parent directory already has dentry of `path`
+  d_child_p = dentry->d_children;
+  do {
+    dentry = (struct dentry *)d_child_p->data;
+
+    if (dentry == NULL) {
+      d_child_p = d_child_p->next;
+      continue;
+    }
+
+    printf("dentry->d_name: %s\n", dentry->d_name);
+
+    if (strcmp(dentry->d_name, (path + last_slash)) == 0) {
+      return -EEXIST;
+    }
+
+    d_child_p = d_child_p->next;
+  } while (d_child_p != dentry->d_children);
+
+  dentry = dentry_alloc(NULL);
+  memset(dentry->d_name, 0, 64);
+  memcpy(dentry->d_name, path + last_slash + 1,
+         last_slash == -1 ? (i < 64 ? i : 63)
+                          : (i - last_slash < 64 ? i - last_slash : 63));
+  dentry->d_parent = parent;
+
+  if ((res = yext2_create(sb, parent->d_inode, dentry, mode, false)) < 0) {
+    free(dentry);
+    return res;
+  }
+
+  list_append(parent->d_children, dentry);
+
+  return 0;
+}
+
 int yext2_open_fuse(const char *path, struct fuse_file_info *fi) { return 0; }
 
 int yext2_read_fuse(const char *path, char *buf, size_t size, off_t offset,
@@ -273,7 +345,8 @@ int yext2_mkdir_fuse(const char *path, mode_t mode) {
   dentry = dentry_alloc(NULL);
   memset(dentry->d_name, 0, 64);
   memcpy(dentry->d_name, path + last_slash + 1,
-         last_slash == -1 ? i : i - last_slash);
+         last_slash == -1 ? (i < 64 ? i : 63)
+                          : (i - last_slash < 64 ? i - last_slash : 63));
   dentry->d_parent = parent;
 
   if ((res = yext2_mkdir(sb, parent, dentry)) < 0) {

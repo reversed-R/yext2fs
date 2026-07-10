@@ -53,11 +53,12 @@ static int yext2_make_empty_dir_block(struct super_block *sb, int block,
 
 // @dentry: 新たに作られるディレクトリエントリ
 // @inode: 新たに作られるディレクトリエントリのために割り当てられたinode
-static int yext2_add_link(struct super_block *sb, struct dentry *dentry,
-                          struct inode *inode) {
+int yext2_add_link(struct super_block *sb, struct dentry *dentry,
+                   struct inode *inode) {
   struct yext2_super_block *sbi = YEXT2_SB(sb);
   struct dentry *parent = dentry->d_parent;
-  struct yext2_inode *parent_yinode = YEXT2_INODE(parent->d_inode);
+  struct yext2_inode *parent_yinode = YEXT2_INODE(parent->d_inode),
+                     *yinode = YEXT2_INODE(inode);
   const char *name = dentry->d_name;
   int namelen = strlen(name);
   unsigned reclen = YEXT2_DIR_REC_LEN(namelen);
@@ -104,7 +105,7 @@ got_it:
   de->name_len = namelen;
   memcpy(de->name, name, namelen);
   de->inode = cpu_to_le32(dentry->d_inode->ino);
-  de->file_type = FT_DIR;
+  de->file_type = fs_umode_to_ftype(yinode->i_mode);
 
   // FUSE: set pointer of disk dentry as fsdata
   dentry->d_fsdata = de;
@@ -122,41 +123,46 @@ int yext2_mkdir(struct super_block *sb, struct dentry *parent,
   struct yext2_inode *parent_yinode, *yinode;
   unsigned long dentry_block, goal;
   long tmp_dentry_block;
-  int ino;
 
   sbi = YEXT2_SB(sb);
   parent_yinode = YEXT2_INODE(parent->d_inode);
 
-  if ((ino = yext2_alloc_ino(sb, parent->d_inode->ino)) < 0)
-    return -1;
+  if ((inode = yext2_new_inode(sb, parent->d_inode, (S_IFDIR | 0755),
+                               dentry->d_name)) == NULL)
+    return -EFAULT;
 
-  yinode = yext2_get_inode(sb, ino);
-  yext2_inode_init(sbi, yinode, (S_IFDIR | 0755));
-  // . and ..
-  yext2_inode_inc_link_count(yinode);
-  yext2_inode_inc_link_count(yinode);
+  yinode = YEXT2_INODE(inode);
 
+  /* allocate dentry block */
   goal = le32_to_cpu(sbi->s_first_data_block) +
-         YEXT2_INO_BLOCK_GROUP(sbi, ino) * le32_to_cpu(sbi->s_blocks_per_group);
+         YEXT2_INO_BLOCK_GROUP(sbi, inode->ino) *
+             le32_to_cpu(sbi->s_blocks_per_group);
   if ((tmp_dentry_block = yext2_alloc_block(sb, goal)) < 0)
     return -1;
   dentry_block = (unsigned long)tmp_dentry_block;
 
-  if (yext2_make_empty_dir_block(sb, dentry_block, ino, parent->d_inode) < 0)
+  if (yext2_make_empty_dir_block(sb, dentry_block, inode->ino,
+                                 parent->d_inode) < 0)
     return -1;
 
   yinode->i_block[0] = cpu_to_le32(dentry_block);
+  /* ---- allocate dentry block */
 
-  inode = inode_get(sb, ino);
-  inode->i_private = yinode;
-  dentry->d_inode = inode; // in kernel land, automatically d_instantiate()
-                           // called and set value
+  d_instantiate(dentry, inode);
   dentry->d_parent = parent;
-  yext2_add_link(sb, dentry, inode);
+  if (yext2_add_link(sb, dentry, inode) < 0) {
+    // TODO:
+    // discard inode
+  }
 
+  // . and ..
+  yext2_inode_inc_link_count(yinode);
+  yext2_inode_inc_link_count(yinode);
+
+  // . to ..
   yext2_inode_inc_link_count(parent_yinode);
 
-  gdt = yext2_get_group_desc(sb, YEXT2_INO_BLOCK_GROUP(sbi, ino));
+  gdt = yext2_get_group_desc(sb, YEXT2_INO_BLOCK_GROUP(sbi, inode->ino));
   gdt->bg_used_dirs_count =
       cpu_to_le16(le16_to_cpu(gdt->bg_used_dirs_count) + 1);
 

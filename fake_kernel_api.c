@@ -93,6 +93,10 @@ struct dentry *d_make_root(struct inode *root_inode) {
   return dentry;
 }
 
+void d_instantiate(struct dentry *dentry, struct inode *inode) {
+  dentry->d_inode = inode;
+}
+
 struct super_block *super_block_new() {
   struct super_block *sb;
 
@@ -132,3 +136,5 @@ unsigned char fs_umode_to_ftype(umode_t mode) {
 }
 
 u32 yext2_get_time_sec() { return time(NULL); }
+
+umode_t mode_to_umode(mode_t mode) { return mode; }

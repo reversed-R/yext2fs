@@ -4,15 +4,24 @@
 #include <asm-generic/errno-base.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 
 void yext2_inode_init(struct yext2_super_block *sbi, struct yext2_inode *inode,
-                      mode_t mode) {
+                      umode_t mode) {
   memset(inode, 0, sizeof(struct yext2_inode));
 
-  inode->i_size = cpu_to_le32(YEXT2_BLOCK_BYTE_SIZE(sbi));
-  inode->i_blocks =
-      cpu_to_le32(YEXT2_BLOCK_BYTE_SIZE(sbi) / 512); // sector count
+  if (S_ISDIR(mode))
+    inode->i_size = cpu_to_le32(YEXT2_BLOCK_BYTE_SIZE(sbi));
+  else
+    inode->i_size = 0;
+
+  if (S_ISDIR(mode))
+    inode->i_blocks =
+        cpu_to_le32(YEXT2_BLOCK_BYTE_SIZE(sbi) / 512); // sector count
+  else
+    inode->i_blocks = 0;
+
   inode->i_mode = mode;
 
   u32 time = yext2_get_time_sec();
@@ -133,4 +142,25 @@ int yext2_alloc_ino(struct super_block *sb, ino_t parent) {
   /* TODO: 全ブロックグループから探す */
 
   return -ENOSPC;
+}
+
+struct inode *yext2_new_inode(struct super_block *sb, struct inode *parent,
+                              umode_t mode, const char *name) {
+  struct yext2_super_block *sbi;
+  struct yext2_inode *yinode;
+  struct inode *inode;
+  int ino;
+
+  sbi = YEXT2_SB(sb);
+
+  if ((ino = yext2_alloc_ino(sb, parent->ino)) < 0)
+    return NULL;
+
+  yinode = yext2_get_inode(sb, ino);
+  yext2_inode_init(sbi, yinode, mode);
+
+  inode = inode_get(sb, ino);
+  inode->i_private = yinode;
+
+  return inode;
 }
