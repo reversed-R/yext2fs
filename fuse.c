@@ -5,10 +5,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 
 #include "fake_disk.h"
 #include "fake_kernel_api.h"
 #include "yext2.h"
+
+#define max(x, y) ((x) > (y) ? (x) : (y))
+#define min(x, y) ((x) > (y) ? (y) : (x))
 
 static const char *content = "Hello, World!\n";
 
@@ -29,11 +33,14 @@ static void yext2_load_dir_children(struct super_block *sb,
 
   // if not cached yet in fake kernel dentry
   if (dentry->d_children == NULL) {
-    d_children = list_new();
-
     de_inode = YEXT2_INODE(dentry->d_inode);
     sbi = YEXT2_SB(sb);
     block_size = YEXT2_BLOCK_BYTE_SIZE(sbi);
+
+    if (!S_ISDIR(de_inode->i_mode))
+      return;
+
+    d_children = list_new();
 
     for (int i = 0; i < le32_to_cpu(de_inode->i_size) / block_size; i++) {
       block = le32_to_cpu(de_inode->i_block[i]);
@@ -117,6 +124,10 @@ static struct dentry *yext2_search_dentry_of_path_fuse(struct super_block *sb,
   if (i == 0 && path[0] == '/')
     return yext2_search_dentry_of_path_fuse(sb, dentry, (path + 1));
 
+  // if d_children is NULL after load_dir_children, dentry is not directory.
+  if (dentry->d_children == NULL)
+    return NULL;
+
   d_child_p = dentry->d_children;
   do {
     d_child = (struct dentry *)d_child_p->data;
@@ -127,14 +138,10 @@ static struct dentry *yext2_search_dentry_of_path_fuse(struct super_block *sb,
       continue;
     }
 
-    printf("de: %p\n", de);
-    printf("de->name_len: %d\n", de->name_len);
-
     memcpy(de_name, de->name, de->name_len);
     de_name[de->name_len] = '\0';
 
     printf("de_name: %s\n", de_name);
-    printf("current_de_name: %s\n", current_de_name);
 
     if (strcmp(current_de_name, de_name) == 0) {
       if (de->file_type == FT_DIR) {
@@ -149,8 +156,6 @@ static struct dentry *yext2_search_dentry_of_path_fuse(struct super_block *sb,
 
     d_child_p = d_child_p->next;
   } while (d_child_p != dentry->d_children);
-
-  printf("return from yext2_search_dentry_of_path_fuse\n");
 
   return NULL;
 }
@@ -196,7 +201,7 @@ int yext2_getattr_fuse(const char *path, struct stat *stbuf) {
   memset(stbuf, 0, sizeof(struct stat));
 
   dentry = yext2_search_dentry_of_path_fuse(sb, sb->s_root, path);
-  printf("dentry: %p\n", dentry);
+  printf("getattr: dentry: %p\n", dentry);
   if (dentry == NULL)
     return -ENOENT;
 
@@ -229,7 +234,7 @@ int yext2_create_fuse(const char *path, mode_t mode,
   char *tmp_path; // temporaly path buffer which the deepest dir is cut
   int res;
 
-  printf("path: %s\n", path);
+  printf("create: path: %s\n", path);
 
   // cut the deepest dir
   // foo/bar/baz
@@ -249,11 +254,17 @@ int yext2_create_fuse(const char *path, mode_t mode,
   memcpy(tmp_path, path, last_slash);
   tmp_path[last_slash] = '\0';
 
+  printf("create: parent path: %s\n", tmp_path);
+
   parent = yext2_search_dentry_of_path_fuse(sb, sb->s_root, tmp_path);
+  printf("create: parent: %p\n", parent);
   free(tmp_path);
+  if (parent == NULL)
+    return -ENOENT;
 
   // check parent directory already has dentry of `path`
-  d_child_p = dentry->d_children;
+  d_child_p = parent->d_children;
+  printf("create: d_child_p: %p\n", d_child_p);
   do {
     dentry = (struct dentry *)d_child_p->data;
 
@@ -269,7 +280,7 @@ int yext2_create_fuse(const char *path, mode_t mode,
     }
 
     d_child_p = d_child_p->next;
-  } while (d_child_p != dentry->d_children);
+  } while (d_child_p != parent->d_children);
 
   dentry = dentry_alloc(NULL);
   memset(dentry->d_name, 0, 64);
@@ -292,24 +303,84 @@ int yext2_open_fuse(const char *path, struct fuse_file_info *fi) { return 0; }
 
 int yext2_read_fuse(const char *path, char *buf, size_t size, off_t offset,
                     struct fuse_file_info *fi) {
-  // FIXME: mock
+  struct dentry *dentry;
+  struct yext2_super_block *sbi;
+  struct yext2_inode *yinode;
+  int i_block, offset_in_block;
+  u32 block, file_size, block_size, readable_size;
+  char *data_block;
 
-  if (strcmp(path, "/file") == 0) {
-    size_t len = strlen(content);
-    if (offset >= len)
-      return 0;
+  sbi = YEXT2_SB(sb);
+  block_size = YEXT2_BLOCK_BYTE_SIZE(sbi);
+  i_block = offset / block_size;
+  offset_in_block = offset % block_size;
 
-    /* データを返す */
-    if ((size > len) || (offset + size > len)) {
-      memcpy(buf, content + offset, len - offset);
-      return len - offset;
-    } else {
-      memcpy(buf, content + offset, size);
-      return size;
-    }
+  dentry = yext2_search_dentry_of_path_fuse(sb, sb->s_root, path);
+  if (dentry == NULL)
+    return -ENOENT;
+
+  yinode = YEXT2_INODE(dentry->d_inode);
+  file_size = le32_to_cpu(yinode->i_size);
+  if (offset > file_size)
+    return 0;
+
+  block = yext2_get_block_from_i_block(sb, yinode, i_block);
+  if (block == 0)
+    return 0; // nothing to read
+
+  readable_size =
+      min((file_size - offset), min(size, (block_size - offset_in_block)));
+  data_block = yext2_block_read(sb, block);
+  memcpy(buf, data_block + offset_in_block, readable_size);
+
+  return readable_size;
+}
+
+int yext2_write_fuse(const char *path, const char *data, size_t size,
+                     off_t offset, struct fuse_file_info *fi) {
+  struct dentry *dentry;
+  struct inode *inode;
+  struct yext2_super_block *sbi;
+  struct yext2_inode *yinode;
+  int i_block, offset_in_block, block_size;
+  u32 block, goal;
+  long tmp_block;
+
+  sbi = YEXT2_SB(sb);
+  block_size = YEXT2_BLOCK_BYTE_SIZE(sbi);
+  i_block = offset / block_size;
+  offset_in_block = offset % block_size;
+
+  dentry = yext2_search_dentry_of_path_fuse(sb, sb->s_root, path);
+  printf("write: dentry: %p\n", dentry);
+  if (dentry == NULL)
+    return -ENOENT;
+  inode = dentry->d_inode;
+  yinode = YEXT2_INODE(inode);
+
+  printf("write: i_block: %d\n", i_block);
+
+  block = yext2_get_block_from_i_block(sb, yinode, i_block);
+  printf("write: block: %d\n", block);
+  if (block == 0) {
+    // block not yet allcated, so need to allocate.
+    goal = yext2_find_near(sbi, inode, i_block);
+    tmp_block = yext2_alloc_block(sb, goal);
+    if (tmp_block < 0)
+      return -ENOSPC;
+    block = (u32)tmp_block;
+    yinode->i_block[i_block] = cpu_to_le32(block);
+    yinode->i_blocks = cpu_to_le32(le32_to_cpu(yinode->i_blocks) +
+                                   YEXT2_BLOCK_BYTE_SIZE(sbi) / SECTOR_SIZE);
   }
 
-  return -ENOENT;
+  printf("write: (2) block: %d\n", block);
+
+  yext2_block_write(sb, block, offset_in_block, data, size);
+
+  yinode->i_size = cpu_to_le32(max(le32_to_cpu(yinode->i_size), offset + size));
+
+  return size;
 }
 
 int yext2_mkdir_fuse(const char *path, mode_t mode) {
@@ -341,6 +412,8 @@ int yext2_mkdir_fuse(const char *path, mode_t mode) {
 
   parent = yext2_search_dentry_of_path_fuse(sb, sb->s_root, tmp_path);
   free(tmp_path);
+  if (parent == NULL)
+    return -ENOENT;
 
   dentry = dentry_alloc(NULL);
   memset(dentry->d_name, 0, 64);

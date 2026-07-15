@@ -3,6 +3,7 @@
 #include "yext2.h"
 #include <stdio.h>
 #include <string.h>
+#include <sys/types.h>
 
 char *yext2_fuse_fake_disk;
 
@@ -24,6 +25,13 @@ char *yext2_block_read(struct super_block *sb, sector_t block) {
   struct yext2_super_block *sbi = YEXT2_SB(sb);
   int block_size = YEXT2_BLOCK_BYTE_SIZE(sbi);
   return &yext2_fuse_fake_disk[block_size * block];
+}
+
+void yext2_block_write(struct super_block *sb, sector_t block, loff_t offset,
+                       const char *data, int size) {
+  struct yext2_super_block *sbi = YEXT2_SB(sb);
+  int block_size = YEXT2_BLOCK_BYTE_SIZE(sbi);
+  memcpy((yext2_fuse_fake_disk + block_size * block + offset), data, size);
 }
 
 void yext2_group_desc_print(struct yext2_block_group_desc *bg) {

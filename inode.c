@@ -164,3 +164,80 @@ struct inode *yext2_new_inode(struct super_block *sb, struct inode *parent,
 
   return inode;
 }
+
+u32 yext2_get_block_from_i_block(struct super_block *sb,
+                                 struct yext2_inode *yinode, int i_block) {
+  struct yext2_super_block *sbi;
+  int ptrs;
+  le32 *single_ptrs, *double_ptrs, *triple_ptrs;
+
+  sbi = YEXT2_SB(sb);
+  ptrs = YEXT2_PTRS_PER_BLOCK(YEXT2_BLOCK_BYTE_SIZE(sbi));
+
+  if (i_block < YEXT2_NDIR_BLOCKS)
+    return le32_to_cpu(yinode->i_block[i_block]);
+
+  // single indirect pointer
+  i_block -= YEXT2_NDIR_BLOCKS;
+  if (i_block < ptrs) {
+    if ((single_ptrs = (le32 *)yext2_block_read(
+             sb, le32_to_cpu(yinode->i_block[12]))) == 0)
+      return 0;
+
+    return le32_to_cpu(single_ptrs[i_block]);
+  }
+
+  // double indirect pointer
+  i_block -= ptrs;
+  if (i_block < ptrs * ptrs) {
+    if ((double_ptrs = (le32 *)yext2_block_read(
+             sb, le32_to_cpu(yinode->i_block[13]))) == 0)
+      return 0;
+
+    if ((single_ptrs = (le32 *)yext2_block_read(
+             sb, le32_to_cpu(double_ptrs[i_block / ptrs]))) == 0)
+      return 0;
+
+    return le32_to_cpu(single_ptrs[i_block % ptrs]);
+  }
+
+  // triple indirect pointer
+  i_block -= ptrs * ptrs;
+  if (i_block < ptrs * ptrs * ptrs) {
+    if ((triple_ptrs = (le32 *)yext2_block_read(
+             sb, le32_to_cpu(yinode->i_block[14]))) == 0)
+      return 0;
+
+    if ((double_ptrs = (le32 *)yext2_block_read(
+             sb, le32_to_cpu(triple_ptrs[i_block / (ptrs * ptrs)]))) == 0)
+      return 0;
+
+    if ((single_ptrs = (le32 *)yext2_block_read(
+             sb, le32_to_cpu(double_ptrs[(i_block / ptrs) % ptrs]))) == 0)
+      return 0;
+
+    return le32_to_cpu(single_ptrs[i_block % ptrs]);
+  }
+
+  // not found
+  return 0;
+}
+
+u32 yext2_find_near(struct yext2_super_block *sbi, struct inode *inode,
+                    int i_block) {
+  struct yext2_inode *yinode;
+  u32 prev, ino;
+
+  yinode = YEXT2_INODE(inode);
+
+  if (i_block > 0 && (prev = le32_to_cpu(yinode->i_block[i_block - 1])) != 0) {
+    // 直前のブロックの直後に連続配置
+    return prev + 1;
+  } else {
+    // inode と同じブロックグループの先頭
+    ino = inode->ino;
+    return le32_to_cpu(sbi->s_first_data_block) +
+           YEXT2_INO_BLOCK_GROUP(sbi, ino) *
+               le32_to_cpu(sbi->s_blocks_per_group);
+  }
+}

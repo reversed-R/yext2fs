@@ -3,6 +3,8 @@
 
 #include "fake_kernel_api.h"
 
+#define SECTOR_SIZE 512
+
 #define BOOT_SECTOR_SIZE 1024
 
 #define YEXT2_BAD_INO 1 /* bad blocks inode */
@@ -164,6 +166,9 @@ struct yext2_dentry {
 // 1024 (ext2 minimal block size) * 2 ^ sbi->s_log_block_size
 #define YEXT2_BLOCK_BYTE_SIZE(sbi) (1024 << le32_to_cpu(sbi->s_log_block_size))
 
+#define YEXT2_NDIR_BLOCKS 12
+#define YEXT2_PTRS_PER_BLOCK(block_size) (block_size / sizeof(u32))
+
 void yext2_super_block_print(struct yext2_super_block *sb);
 
 void yext2_group_desc_print(struct yext2_block_group_desc *bg);
@@ -197,6 +202,12 @@ int yext2_add_link(struct super_block *sb, struct dentry *dentry,
 
 struct inode *yext2_new_inode(struct super_block *sb, struct inode *parent,
                               umode_t mode, const char *name);
+
+u32 yext2_get_block_from_i_block(struct super_block *sb,
+                                 struct yext2_inode *yinode, int i_block);
+
+u32 yext2_find_near(struct yext2_super_block *sbi, struct inode *inode,
+                    int i_block);
 
 //  <------------ byte ------------>
 // | 7 | 6 | 5 | 4 | 3 | 2 | 1 | 0 |

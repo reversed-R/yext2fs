@@ -3,6 +3,7 @@
 #include "yext2.h"
 #include <asm-generic/errno-base.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 void yext2_dentry_print(struct yext2_dentry *dentry) {
@@ -151,8 +152,8 @@ int yext2_mkdir(struct super_block *sb, struct dentry *parent,
   d_instantiate(dentry, inode);
   dentry->d_parent = parent;
   if (yext2_add_link(sb, dentry, inode) < 0) {
-    // TODO:
-    // discard inode
+    d_instantiate(dentry, NULL);
+    free(inode);
   }
 
   // . and ..

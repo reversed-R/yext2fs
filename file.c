@@ -3,6 +3,7 @@
 #include "fake_kernel_api.h"
 #include "yext2.h"
 #include <asm-generic/errno-base.h>
+#include <stdlib.h>
 
 int yext2_create(struct super_block *sb, struct inode *dir,
                  struct dentry *dentry, umode_t mode, bool excl) {
@@ -21,8 +22,8 @@ int yext2_create(struct super_block *sb, struct inode *dir,
   d_instantiate(dentry, inode);
 
   if (yext2_add_link(sb, dentry, inode) < 0) {
-    // TODO:
-    // discard inode
+    d_instantiate(dentry, NULL);
+    free(inode);
   }
 
   // .. to this

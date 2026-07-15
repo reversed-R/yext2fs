@@ -76,7 +76,9 @@ static struct fuse_operations yext2_fops = {
     .mkdir = yext2_mkdir_fuse,
     .getattr = yext2_getattr_fuse,
     .open = yext2_open_fuse,
+    .create = yext2_create_fuse,
     .read = yext2_read_fuse,
+    .write = yext2_write_fuse,
 };
 
 int main(int argc, char *argv[]) {
